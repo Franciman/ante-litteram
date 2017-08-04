@@ -11,7 +11,7 @@ author:              Francesco Magliocca
 maintainer:          franciman12@gmail.com
 -- copyright:           
 -- category:            
-build-type:          Simple
+build-type:          Custom
 extra-source-files:  ChangeLog.md, GtkGui.glade
 cabal-version:       >=1.10
 

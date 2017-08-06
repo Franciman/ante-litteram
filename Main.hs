@@ -25,7 +25,7 @@ gui :: AudioInfo -> SubtitleList -> IO ()
 gui res subs = do
     f <- frame [text := "Waveform"]
     p <- panel f []
-    w <- newWaveform res subs p
+    w <- newWaveform basicColorConfig res subs p
     set (waveformWidget w) [clientSize := (sz 938 266)]
     --set f [layout := rigid (widget $ waveformWidget w)]
 

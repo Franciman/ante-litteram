@@ -18,6 +18,7 @@ import Debug.Trace
 import System.IO
 
 import Graphics.UI.WXCore.Draw (getTextExtent)
+import Graphics.UI.WXCore.WxcTypes (colorRGBA)
 
 import Text.Printf
 
@@ -103,34 +104,62 @@ zoomPeaks from to audioInfo zoomCtx = let peaksPerMs           = (peaksPerSecond
                                       in trace ("PpP: " ++ (show peaksPerPixel) ++ " PpPR: " ++ (show peaksPerPixelRounded)) $ map (scalePeak . mkPeak) peakGroups
 
 
+data ColorConfig = ColorConfig
+                 { waveBackColor           :: Color
+                 , waveColor               :: Color
+                 , rangeColor1             :: Color
+                 , rangeColor2             :: Color
+                 , nonEditableRangeColor   :: Color
+                 , selectionColor          :: Color
+                 , minBlankColor           :: Color
+                 , cursorColor             :: Color
+                 , rulerBackColor          :: Color
+                 , rulerTopBottomLineColor :: Color
+                 , rulerTextColor          :: Color
+                 , rulerTextShadowColor    :: Color
+                 }
 
-
+basicColorConfig :: ColorConfig
+basicColorConfig = ColorConfig
+                 { waveBackColor           = colorRGB 11 19 43
+                 , waveColor               = colorRGB 111 255 233
+                 , rangeColor1             = colorRGB 62 120 178
+                 , rangeColor2             = colorRGB 241 136 5
+                 , nonEditableRangeColor   = colorRGB 141 153 174
+                 , selectionColor          = colorRGBA 255 255 255 20
+                 , minBlankColor           = colorRGBA 255 255 255 90
+                 , cursorColor             = colorRGB 74 49 77
+                 , rulerBackColor          = colorRGB 81 71 65
+                 , rulerTopBottomLineColor = colorRGB 190 181 174
+                 , rulerTextColor          = colorRGB 224 224 224
+                 , rulerTextShadowColor    = colorRGB 0 0 0
+                 }
 
 data Waveform = Waveform
               { zoomInfos :: ZoomInfo
               , widgetW :: Panel ()
               }
 
-newWaveform :: AudioInfo -> SubtitleList -> Window a -> IO Waveform
-newWaveform audioInfo subs parent = Waveform defaultZoomInfo <$>
-                                        panel parent [on paint := paintWaveform audioInfo subs defaultZoomInfo]
+newWaveform :: ColorConfig -> AudioInfo -> SubtitleList -> Window a -> IO Waveform
+newWaveform colors audioInfo subs parent = Waveform defaultZoomInfo <$>
+                                        panel parent [on paint := paintWaveform colors audioInfo subs defaultZoomInfo]
 
 waveformWidget :: Waveform -> Panel ()
 waveformWidget = widgetW
 
-paintWaveform :: AudioInfo -> SubtitleList -> ZoomInfo -> DC () -> Rect -> IO ()
-paintWaveform audioInfo subs zoomInfo dc bounds = do
+paintWaveform :: ColorConfig -> AudioInfo -> SubtitleList -> ZoomInfo -> DC () -> Rect -> IO ()
+paintWaveform colors audioInfo subs zoomInfo dc bounds = do
     let rulerHeight = 20
     let waveRect = bounds { rectHeight = rectHeight bounds - rulerHeight }
-    paintWave audioInfo zoomInfo dc waveRect
+    paintWave colors audioInfo zoomInfo dc waveRect
 
     let rulerRect = bounds { rectTop = (rectHeight bounds) - rulerHeight, rectHeight = rulerHeight }
-    paintRuler zoomInfo dc rulerRect
+    paintRuler colors zoomInfo dc rulerRect
 
-    paintSubs dc subs zoomInfo waveRect
+    paintSubs colors dc subs zoomInfo waveRect
 
-paintWave :: AudioInfo -> ZoomInfo -> DC () -> Rect -> IO ()
-paintWave audioInfo zoomInfo dc bounds = do
+paintWave :: ColorConfig -> AudioInfo -> ZoomInfo -> DC () -> Rect -> IO ()
+paintWave colors audioInfo zoomInfo dc bounds = do
     let zoomCtx = Zoom zoomInfo bounds
     let width = rectWidth bounds - 1
     let zoomedPeaks = zoomPeaks 0 width  audioInfo zoomCtx
@@ -142,9 +171,9 @@ paintWave audioInfo zoomInfo dc bounds = do
     trace ("Height: " ++ (show (rectHeight bounds))) $ return ()
     trace ("Peaks: " ++ (show (length zoomedPeaks))) $ return ()
    
-    drawRect dc bounds [brushColor := black]
+    drawRect dc bounds [brushColor := waveBackColor colors]
 
-    set dc [penColor := red]
+    set dc [penColor := waveColor colors]
 
     forM_ zoomedPeaksWithPos $ \(pos, peak) -> do
         let from = point pos (middlePos - fromIntegral (maxVal peak))
@@ -155,11 +184,13 @@ paintWave audioInfo zoomInfo dc bounds = do
     let to   = point (rectWidth bounds) middlePos
     line dc from to []
 
-paintRuler :: ZoomInfo -> DC () -> Rect -> IO ()
-paintRuler zoomInfo dc bounds = do
-    drawRect dc bounds [brushColor := grey]
+paintRuler :: ColorConfig -> ZoomInfo -> DC () -> Rect -> IO ()
+paintRuler colors zoomInfo dc bounds = do
+    drawRect dc bounds [brushColor := rulerBackColor colors]
 
-    set dc [penColor := black]
+    set dc [penColor := rulerTopBottomLineColor colors]
+    line dc (rectTopLeft bounds) (rectTopRight bounds) []
+    line dc (rectBottomLeft bounds) (rectBottomRight bounds) []
 
     let startTime = positionMs zoomInfo
     let endTime   = startTime + pageSizeMs zoomInfo
@@ -197,7 +228,7 @@ paintRuler zoomInfo dc bounds = do
                                   timing = timeMsToString pos stepApprox exponent
                               in (timing, x, x2))
 
-    mapM_ ((\(timing, x, x2) -> drawTime dc bounds timing x x2) . makeParams) positions
+    mapM_ ((\(timing, x, x2) -> drawTime colors dc bounds timing x x2) . makeParams) positions
 
 
 timeMsToString :: Int -> Int -> Int -> String
@@ -211,35 +242,37 @@ timeMsToString timeMs msPrecision msPrecisionLog = formatString . uncurry (:) $ 
                                           then res ++ printf (".%0" ++ show (3 - msPrecisionLog) ++ "d") ms
                                           else res
 
-drawTime :: DC () -> Rect -> String -> Int -> Int -> IO ()
-drawTime dc bounds timing x x2 = do
+drawTime :: ColorConfig -> DC () -> Rect -> String -> Int -> Int -> IO ()
+drawTime colors dc bounds timing x x2 = do
 
     -- Draw main division
     let from = Point x $ (rectTop bounds) + 1
     let to   = Point x $ (rectTop bounds) + 5
-    line dc from to []
+    line dc from to [penColor := rulerTextColor colors]
+
 
     textSize <- getTextExtent dc timing
 
     let x' = x - ((sizeW textSize) `quot` 2)
     let y' = (rectTop bounds) + {-(sizeH textSize) +-} 4
 
+
     -- Draw text shadow
-    drawText dc timing (Point (x' + 2) (y' + 2)) [textColor := black]
+    drawText dc timing (Point (x' + 2) (y' + 2)) [textColor := rulerTextShadowColor colors]
     -- Draw text
-    drawText dc timing (Point x' y') [textColor := white]
+    drawText dc timing (Point x' y') [textColor := rulerTextColor colors]
 
     -- Draw subdivision
     let from2 = Point x2 $ (rectTop bounds) + 1
     let to2   = Point x2 $ (rectTop bounds) + 3
-    line dc from2 to2 []
+    line dc from2 to2 [penColor := rulerTextColor colors]
 
 
 
 
-paintSubs :: DC () -> SubtitleList -> ZoomInfo -> Rect -> IO ()
-paintSubs dc subs zoomInfo bounds = do
-    let colors = [blue, magenta]
+paintSubs :: ColorConfig -> DC () -> SubtitleList -> ZoomInfo -> Rect -> IO ()
+paintSubs colorC dc subs zoomInfo bounds = do
+    let colors = [rangeColor2 colorC, rangeColor1 colorC]
 
     let heightDiv10 = (rectHeight bounds) `quot` 10
     let y1 = (rectTop bounds) + heightDiv10
@@ -255,7 +288,7 @@ paintSubs dc subs zoomInfo bounds = do
     let zoomCtx = Zoom zoomInfo bounds
 
     forM_ subsAndColors $ \(color, sub) -> do
-        set dc [penColor := color]
+        set dc [penColor := color, textColor := color]
         paintSub dc sub zoomCtx y1 y2
 
 
@@ -275,7 +308,7 @@ paintSub dc sub zoomCtx@(Zoom info bounds) y1 y2 = do
             let subStartPx' = subStartPx + textMargins
             --let subEndPx'   = subEndPx - textMargins
 
-            drawText dc (Subtitle.dialog sub) (Point subStartPx' y1) [textColor := red]
+            drawText dc (Subtitle.dialog sub) (Point subStartPx' y1) []--[textColor := red]
         
     where 
           drawTimePoint :: Int -> IO (Maybe Int)

@@ -1,45 +1,48 @@
 module Main where
 
-import qualified Graphics.UI.Gtk.Builder as B
-import qualified Graphics.UI.Gtk as G
-
-import qualified Graphics.Rendering.Cairo as C
-
-import Debug.Trace (traceM)
-
-import Waveform
-
-import qualified SubtitleList as S (empty)
-
 import PeakExtractor
 import AudioInfo
+import Waveform
+import System.TimeIt
 
-zinfo :: ZoomInfo
-zinfo = defaultZoomInfo
+import Graphics.UI.WX
 
-drawPath :: AudioInfo -> G.DrawingArea -> C.Render ()
-drawPath af = waveformPainter basicColorConfig af S.empty zinfo
+import SubtitleList
+import SubtitleParser
+import SRTParser
+
+import qualified Data.Text.IO as T
+
+printProgress :: ProgressTracker
+printProgress curr total = do
+    let percent = round ((fromIntegral curr / fromIntegral total) * 100) :: Int
+    putStrLn (show percent ++ "%")
+
+emptyProg :: ProgressTracker
+emptyProg _ _ = return ()
+
+gui :: AudioInfo -> SubtitleList -> IO ()
+gui res subs = do
+    f <- frame [text := "Waveform"]
+    p <- panel f []
+    w <- newWaveform res subs p
+    set (waveformWidget w) [clientSize := (sz 938 266)]
+    --set f [layout := rigid (widget $ waveformWidget w)]
 
 main :: IO ()
 main = do
-    res <- readFromDump "/home/francesco/Desktop/PeakFile"
-    
-    G.initGUI
-    --builder <- B.builderNew
-    --B.builderAddFromFile builder "GtkGui.glade"
+    --res <- extractPeaks emptyProg "/home/francesco/Desktop/vid.mp4"
+    --dumpInfos res "/home/francesco/Desktop/PeakFileHs"
+    res <- Just <$> readFromDump "/home/francesco/Desktop/PeakFile"
 
-    --mainWindow <- B.builderGetObject builder G.castToWindow "mainWindow"
-    --canvas     <- B.builderGetObject builder G.castToDrawingArea "timeline"
+    (Right subs) <- (flip parseSubs) srtParser <$> T.readFile "/home/francesco/Desktop/VO.srt"
 
-    mainWindow <- G.windowNew
-    canvas <- G.drawingAreaNew
 
-    G.containerAdd mainWindow canvas
+    let subsList = fromList subs
+    putStrLn $ "Len: " ++ (show (length subs))
+    putStrLn $ "Size: " ++ (show (SubtitleList.size subsList))
+    case res of
+        Nothing -> putStrLn "Error while reading media file"
+        Just res -> start (gui res subsList)
 
-    G.widgetSetSizeRequest canvas 938 266
-
-    mainWindow `G.on` G.objectDestroy $ G.mainQuit
-    canvas `G.on` G.draw $ drawPath res canvas
-
-    G.widgetShowAll mainWindow
-    G.mainGUI
+    --timedExtraction emptyProg "/home/francesco/Desktop/vid.mp4"

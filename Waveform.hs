@@ -1,5 +1,7 @@
 module Waveform where
 
+import Graphics.UI.WX
+
 import Peak
 import AudioInfo
 
@@ -15,15 +17,14 @@ import Debug.Trace
 
 import System.IO
 
+import Graphics.UI.WXCore.Draw (getTextExtent)
+
 import Text.Printf
 
 import SubtitleList
 import Subtitle
 
 import Data.Maybe (fromMaybe)
-
-import qualified Graphics.Rendering.Cairo as C
-import qualified Graphics.UI.Gtk as G
 
 
 round' :: (RealFrac a, Integral b) => a -> b
@@ -46,26 +47,26 @@ positionIsVisible info posMs = let start = positionMs info
                                    end   = start + pageSizeMs info
                                in start <= posMs && posMs <= end
 
-data Zoom = Zoom ZoomInfo Int Int
+data Zoom = Zoom ZoomInfo Rect
 
 startPos :: Zoom -> Int
-startPos (Zoom info _ _) = positionMs info
+startPos (Zoom info _) = positionMs info
 
 msPerPixel :: Zoom -> Double
-msPerPixel (Zoom info w _) = let width    = realToFrac w
-                                 pageSize  = realToFrac (pageSizeMs info)
-                             in pageSize / width
+msPerPixel (Zoom info bounds) = let width    = realToFrac (rectWidth bounds)
+                                    pageSize = realToFrac (pageSizeMs info)
+                                in pageSize / width
 
 timeToPixel :: Zoom -> Int -> Int
-timeToPixel ctx@(Zoom info _ _) posMs = let dt = posMs - positionMs info
-                                        in round' (realToFrac dt / msPerPixel ctx)
+timeToPixel ctx@(Zoom info r) posMs = let dt = posMs - positionMs info
+                                      in round' (realToFrac dt / msPerPixel ctx)
 
 scalePeakValue :: Zoom -> Int16 -> Int16
-scalePeakValue (Zoom info _ h) p = let vs = verticalScaling info
-                                       height = realToFrac h :: Double
-                                       sp = realToFrac ((fromIntegral p) * vs) / 100 :: Double
-                                       sp' = (sp * height) / 65536
-                                   in round' sp'
+scalePeakValue (Zoom info bounds) p = let vs = verticalScaling info
+                                          height = realToFrac (rectHeight bounds) :: Double
+                                          sp = realToFrac ((fromIntegral p) * vs) / 100 :: Double
+                                          sp' = (sp * height) / 65536
+                                      in round' sp'
 
 defaultZoomInfo :: ZoomInfo
 defaultZoomInfo = ZoomInfo 15000 100 0
@@ -105,148 +106,78 @@ zoomPeaks from to audioInfo zoomCtx = let peaksPerMs           = (peaksPerSecond
 
 
 
---data Waveform = Waveform
-              --{ zoomInfos :: ZoomInfo
-              --, widgetW :: Panel ()
-              --}
+data Waveform = Waveform
+              { zoomInfos :: ZoomInfo
+              , widgetW :: Panel ()
+              }
 
---newWaveform :: AudioInfo -> SubtitleList -> Window a -> IO Waveform
---newWaveform audioInfo subs parent = Waveform defaultZoomInfo <$>
-                                        --panel parent [on paint := paintWaveform audioInfo subs defaultZoomInfo]
+newWaveform :: AudioInfo -> SubtitleList -> Window a -> IO Waveform
+newWaveform audioInfo subs parent = Waveform defaultZoomInfo <$>
+                                        panel parent [on paint := paintWaveform audioInfo subs defaultZoomInfo]
 
+waveformWidget :: Waveform -> Panel ()
+waveformWidget = widgetW
 
---paintWaveform :: AudioInfo -> SubtitleList -> ZoomInfo -> DC () -> Rect -> IO ()
---paintWaveform audioInfo subs zoomInfo dc bounds = do
-    --let rulerHeight = 20
-    --let waveRect = bounds { rectHeight = rectHeight bounds - rulerHeight }
-    --paintWave audioInfo zoomInfo dc waveRect
-
-    --let rulerRect = bounds { rectTop = (rectHeight bounds) - rulerHeight, rectHeight = rulerHeight }
-    --paintRuler zoomInfo dc rulerRect
-
-    --paintSubs dc subs zoomInfo waveRect
-
-data Color = Color { red :: Double, green :: Double, blue :: Double, alpha :: Double }
-
-color :: Int -> Int -> Int -> Color
-color r g b = Color (normalize r) (normalize g) (normalize b) 1
-    where normalize v = realToFrac v / 255
-
-colorA :: Int -> Int -> Int -> Int -> Color
-colorA r g b a = Color (normalize r) (normalize g) (normalize b) (normalizeA a)
-    where normalize v = realToFrac v / 255
-          normalizeA v = realToFrac v / 100
-
-data ColorConfig = ColorConfig
-                 { waveBackColor           :: Color
-                 , waveColor               :: Color
-                 , rangeColor1             :: Color
-                 , rangeColor2             :: Color
-                 , nonEditableRangeColor   :: Color
-                 , selectionColor          :: Color
-                 , minBlankColor           :: Color
-                 , cursorColor             :: Color
-                 , rulerBackColor          :: Color
-                 , rulerTopBottomLineColor :: Color
-                 , rulerTextColor          :: Color
-                 , rulerTextShadowColor    :: Color
-                 }
-
-basicColorConfig :: ColorConfig
-basicColorConfig = ColorConfig
-                 { waveBackColor           = color 11 19 43
-                 , waveColor               = color 111 255 233
-                 , rangeColor1             = color 62 120 178
-                 , rangeColor2             = color 241 136 5
-                 , nonEditableRangeColor   = color 141 153 174
-                 , selectionColor          = colorA 255 255 255 20
-                 , minBlankColor           = colorA 255 255 255 90
-                 , cursorColor             = color 74 49 77
-                 , rulerBackColor          = color 81 71 65
-                 , rulerTopBottomLineColor = color 190 181 174
-                 , rulerTextColor          = color 224 224 224
-                 , rulerTextShadowColor    = color 0 0 0
-                 }
-
-setSourceColor :: Color -> C.Render ()
-setSourceColor (Color r g b a) = C.setSourceRGBA r g b a
-
-waveformPainter :: ColorConfig -> AudioInfo -> SubtitleList -> ZoomInfo -> G.DrawingArea -> C.Render ()
-waveformPainter colors audioInfo subs zoomInfo drawArea = do
-    allocation@(G.Rectangle x y width height) <- C.liftIO $ G.widgetGetAllocation drawArea
+paintWaveform :: AudioInfo -> SubtitleList -> ZoomInfo -> DC () -> Rect -> IO ()
+paintWaveform audioInfo subs zoomInfo dc bounds = do
     let rulerHeight = 20
+    let waveRect = bounds { rectHeight = rectHeight bounds - rulerHeight }
+    paintWave audioInfo zoomInfo dc waveRect
 
-    let waveAlloc = G.Rectangle x y width (height - rulerHeight)
+    let rulerRect = bounds { rectTop = (rectHeight bounds) - rulerHeight, rectHeight = rulerHeight }
+    paintRuler zoomInfo dc rulerRect
 
-    wavePainter colors audioInfo zoomInfo waveAlloc
+    paintSubs dc subs zoomInfo waveRect
 
-    let rulerAlloc = G.Rectangle x (height - rulerHeight) width rulerHeight
-    rulerPainter colors zoomInfo rulerAlloc
+paintWave :: AudioInfo -> ZoomInfo -> DC () -> Rect -> IO ()
+paintWave audioInfo zoomInfo dc bounds = do
+    let zoomCtx = Zoom zoomInfo bounds
+    let width = rectWidth bounds - 1
+    let zoomedPeaks = zoomPeaks 0 width  audioInfo zoomCtx
+    let zoomedPeaksWithPos = zip [0 .. width] zoomedPeaks
+    let middlePos = traceShow (rectHeight bounds) $ (rectHeight bounds) `quot` 2
 
-
-
-
-drawLine :: (Int, Int) -> (Int, Int) -> C.Render ()
-drawLine from to = do
-    let extract = (realToFrac .)
-    C.moveTo (extract fst from) (extract snd from)
-    C.lineTo (extract fst to) (extract snd to)
-
-wavePainter :: ColorConfig -> AudioInfo -> ZoomInfo -> G.Allocation -> C.Render ()
-wavePainter colors audioInfo zoomInfo (G.Rectangle x y width height) = do
-    let zoomCtx = Zoom zoomInfo width height
-    let zoomedPeaksWithPos = zip [0 .. width] $ zoomPeaks 0 width audioInfo zoomCtx
-    let middlePos = traceShow height $ height `quot` 2
-
-    setSourceColor (waveBackColor colors)
-    C.rectangle (realToFrac x) (realToFrac y) (realToFrac width) (realToFrac height)
-    C.fill
-
-    lw <- C.getLineWidth
-
-    traceM ("Line width: " ++ show lw)
-
+    withFile "/home/francesco/ScaledPeaksHs" WriteMode $ (flip dumpPeaks) (map snd zoomedPeaksWithPos)
+    trace ("Width: " ++ (show (rectWidth bounds))) $ return ()
+    trace ("Height: " ++ (show (rectHeight bounds))) $ return ()
+    trace ("Peaks: " ++ (show (length zoomedPeaks))) $ return ()
    
-    setSourceColor (waveColor colors)
+    drawRect dc bounds [brushColor := black]
+
+    set dc [penColor := red]
 
     forM_ zoomedPeaksWithPos $ \(pos, peak) -> do
-       let from = (pos, middlePos - fromIntegral (maxVal peak))
-       let to   = (pos, middlePos - fromIntegral (minVal peak))
-       drawLine from to
+        let from = point pos (middlePos - fromIntegral (maxVal peak))
+        let to   = point pos (middlePos - fromIntegral (minVal peak))
+        line dc from to []
 
-    drawLine (0, middlePos) (width, middlePos)
-    C.stroke
+    let from = point 0 middlePos
+    let to   = point (rectWidth bounds) middlePos
+    line dc from to []
 
-rulerPainter :: ColorConfig -> ZoomInfo -> G.Allocation -> C.Render ()
-rulerPainter colors zoomInfo alloc@(G.Rectangle x y width height) = do
+paintRuler :: ZoomInfo -> DC () -> Rect -> IO ()
+paintRuler zoomInfo dc bounds = do
+    drawRect dc bounds [brushColor := grey]
+
+    set dc [penColor := black]
+
     let startTime = positionMs zoomInfo
     let endTime   = startTime + pageSizeMs zoomInfo
-    let zoom      = Zoom zoomInfo width height
 
+    let zoom = Zoom zoomInfo bounds
 
-    setSourceColor (rulerBackColor colors)
-    C.rectangle (realToFrac x) (realToFrac y) (realToFrac width) (realToFrac height)
-    C.fill
+    set dc [fontFace := "Time New Roman", fontSize := 8]
 
-    setSourceColor (rulerTopBottomLineColor colors)
-    drawLine (x, y) (x + width, y)
-    drawLine (x, y + height) (x + width, y + height)
-    C.stroke
+    textSize <- getTextExtent dc "0:00:00.0"
 
+    trace ("Text size: " ++ show textSize) $ return ()
 
-    setSourceColor (rulerTextColor colors)
+    let textWidth = sizeW textSize * 2
+    let textHeight = sizeH textSize
 
-    C.selectFontFace "Time New Roman" C.FontSlantNormal C.FontWeightNormal
-    C.setFontSize 12.0
-
-    textSize <- C.textExtents "0:00:00.0"
-
-    let textWidth  = truncate (C.textExtentsWidth textSize * 2)
-    let textHeight = truncate (C.textExtentsHeight textSize)
-
-    let maxStep = round' (realToFrac width / realToFrac textWidth)
+    let maxStep = round' (realToFrac (rectWidth bounds) / realToFrac textWidth)
     let stepMs' = round' (realToFrac (pageSizeMs zoomInfo) / realToFrac maxStep)
-    let stepMs'' = (if stepMs' == 0 then 1 else realToFrac stepMs') :: Double
+    let stepMs''  = (if stepMs' == 0 then 1 else realToFrac stepMs') :: Double
 
     -- Find the power of 10 that best approximates (from below) stepMs
     let exponent = truncate (logBase 10 stepMs'')
@@ -255,17 +186,20 @@ rulerPainter colors zoomInfo alloc@(G.Rectangle x y width height) = do
     let stepMs = (truncate (stepMs'' / realToFrac stepApprox)) * stepApprox
     let p      = (startTime `quot` stepMs) * stepMs
 
-    let positions = takeWhile (\p' -> p' < startTime + pageSizeMs zoomInfo) $ map (\m -> p + m * stepMs) [0..]
+    let positions = takeWhile (\p' -> p' < startTime + pageSizeMs zoomInfo) $
+            map (\m -> p + m * stepMs) [0..]
 
-    let makeParams = (\pos -> let pixelPerMs = 1 / msPerPixel zoom
+    putStrLn $ "Positions: " ++ (show positions)
+
+    let makeParams = (\pos -> let pixelPerMs = ( 1 / msPerPixel zoom)
                                   x = truncate $ realToFrac (pos - startTime) * pixelPerMs
                                   x2 = x + (stepMs `quot` 2) * (truncate pixelPerMs)
                                   timing = timeMsToString pos stepApprox exponent
                               in (timing, x, x2))
 
-    mapM_ ((\(timing, x, x2) -> drawTime colors alloc timing x x2) . makeParams) positions
+    mapM_ ((\(timing, x, x2) -> drawTime dc bounds timing x x2) . makeParams) positions
 
-        
+
 timeMsToString :: Int -> Int -> Int -> String
 timeMsToString timeMs msPrecision msPrecisionLog = formatString . uncurry (:) $ foldr extractUnit (timeMs, []) [60, 60, 1000]
     where extractUnit multiplier (remainder, us) = let u = remainder `mod` multiplier
@@ -277,86 +211,81 @@ timeMsToString timeMs msPrecision msPrecisionLog = formatString . uncurry (:) $ 
                                           then res ++ printf (".%0" ++ show (3 - msPrecisionLog) ++ "d") ms
                                           else res
 
+drawTime :: DC () -> Rect -> String -> Int -> Int -> IO ()
+drawTime dc bounds timing x x2 = do
 
-drawTime :: ColorConfig -> G.Allocation -> String -> Int -> Int -> C.Render ()
-drawTime colors (G.Rectangle left top width height) timing x x2 = do
     -- Draw main division
-    let from = (x, top + 1)
-    let to   = (x, top + 5)
+    let from = Point x $ (rectTop bounds) + 1
+    let to   = Point x $ (rectTop bounds) + 5
+    line dc from to []
 
-    drawLine from to
-    C.stroke
+    textSize <- getTextExtent dc timing
 
-    textSize <- C.textExtents timing
-
-    let x' = x - (truncate (C.textExtentsWidth textSize) `quot` 2)
-    let y' = top + 4 + truncate (C.textExtentsHeight textSize)
+    let x' = x - ((sizeW textSize) `quot` 2)
+    let y' = (rectTop bounds) + {-(sizeH textSize) +-} 4
 
     -- Draw text shadow
-    setSourceColor (rulerTextShadowColor colors)
-    C.moveTo (realToFrac x' + 2) (realToFrac y' + 2)
-    C.showText timing
-
+    drawText dc timing (Point (x' + 2) (y' + 2)) [textColor := black]
     -- Draw text
-    setSourceColor (rulerTextColor colors)
-    C.setSourceRGB 255 255 255
-    C.moveTo (realToFrac x') (realToFrac y')
-    C.showText timing
+    drawText dc timing (Point x' y') [textColor := white]
 
     -- Draw subdivision
-    drawLine (x2, top + 1) (x2, top + 3)
-    C.stroke
+    let from2 = Point x2 $ (rectTop bounds) + 1
+    let to2   = Point x2 $ (rectTop bounds) + 3
+    line dc from2 to2 []
 
 
---paintSubs :: DC () -> SubtitleList -> ZoomInfo -> Rect -> IO ()
---paintSubs dc subs zoomInfo bounds = do
-    --let colors = [blue, magenta]
-
-    --let heightDiv10 = (rectHeight bounds) `quot` 10
-    --let y1 = (rectTop bounds) + heightDiv10
-    --let y2 = (rectBottom bounds) - heightDiv10
-
-    --let startTime = positionMs zoomInfo
-    --let endTime   = startTime + pageSizeMs zoomInfo
-
-    --let visibleSubs = subsOverlappingIntervalWithIndex (TimeInterval startTime endTime) subs
-
-    --let subsAndColors = map (first (\i -> colors !! mod i 2)) visibleSubs
-
-    --let zoomCtx = Zoom zoomInfo bounds
-
-    --forM_ subsAndColors $ \(color, sub) -> do
-        --set dc [penColor := color]
-        --paintSub dc sub zoomCtx y1 y2
 
 
---paintSub :: DC () -> Subtitle -> Zoom -> Int -> Int -> IO ()
---paintSub dc sub zoomCtx@(Zoom info bounds) y1 y2 = do
+paintSubs :: DC () -> SubtitleList -> ZoomInfo -> Rect -> IO ()
+paintSubs dc subs zoomInfo bounds = do
+    let colors = [blue, magenta]
 
-        --subStartPx <- fromMaybe 0 <$> drawTimePoint (low . timeInterval $ sub)
-        --subEndPx   <- fromMaybe (rectWidth bounds) <$> drawTimePoint (high . timeInterval $ sub)
+    let heightDiv10 = (rectHeight bounds) `quot` 10
+    let y1 = (rectTop bounds) + heightDiv10
+    let y2 = (rectBottom bounds) - heightDiv10
 
-        --line dc (Point subStartPx y1) (Point subEndPx y1) []
-        --line dc (Point subStartPx y2) (Point subEndPx y2) []
+    let startTime = positionMs zoomInfo
+    let endTime   = startTime + pageSizeMs zoomInfo
 
-        --let textMargins = 5
-        --let minSpace    = 25
-        --when (subEndPx - subStartPx - 2 * textMargins > minSpace) $ do
+    let visibleSubs = subsOverlappingIntervalWithIndex (TimeInterval startTime endTime) subs
 
-            --let subStartPx' = subStartPx + textMargins
+    let subsAndColors = map (first (\i -> colors !! mod i 2)) visibleSubs
+
+    let zoomCtx = Zoom zoomInfo bounds
+
+    forM_ subsAndColors $ \(color, sub) -> do
+        set dc [penColor := color]
+        paintSub dc sub zoomCtx y1 y2
+
+
+paintSub :: DC () -> Subtitle -> Zoom -> Int -> Int -> IO ()
+paintSub dc sub zoomCtx@(Zoom info bounds) y1 y2 = do
+
+        subStartPx <- fromMaybe 0 <$> drawTimePoint (low . timeInterval $ sub)
+        subEndPx   <- fromMaybe (rectWidth bounds) <$> drawTimePoint (high . timeInterval $ sub)
+
+        line dc (Point subStartPx y1) (Point subEndPx y1) []
+        line dc (Point subStartPx y2) (Point subEndPx y2) []
+
+        let textMargins = 5
+        let minSpace    = 25
+        when (subEndPx - subStartPx - 2 * textMargins > minSpace) $ do
+
+            let subStartPx' = subStartPx + textMargins
             --let subEndPx'   = subEndPx - textMargins
 
-            --drawText dc (Subtitle.dialog sub) (Point subStartPx' y1) [textColor := red]
+            drawText dc (Subtitle.dialog sub) (Point subStartPx' y1) [textColor := red]
         
-    --where 
-          --drawTimePoint :: Int -> IO (Maybe Int)
-          --drawTimePoint posMs = do
-             --if not (positionIsVisible info posMs)
-             --then return Nothing
-             --else do
-                 --let timePx = timeToPixel zoomCtx posMs
-                 --let from = Point timePx (rectTop bounds)
-                 --let to   = Point timePx (rectBottom bounds)
-                 --line dc from to [penKind := PenDash DashDot]
-                 --return (Just timePx)
+    where 
+          drawTimePoint :: Int -> IO (Maybe Int)
+          drawTimePoint posMs = do
+             if not (positionIsVisible info posMs)
+             then return Nothing
+             else do
+                 let timePx = timeToPixel zoomCtx posMs
+                 let from = Point timePx (rectTop bounds)
+                 let to   = Point timePx (rectBottom bounds)
+                 line dc from to [penKind := PenDash DashDot]
+                 return (Just timePx)
 

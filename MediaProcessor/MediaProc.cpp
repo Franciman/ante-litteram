@@ -46,7 +46,7 @@ Peak *extractPeaks(const char *filename, void (*tracker)(int64_t, int64_t)
 
         // TODO: Maybe optimize this, to avoid copies?
         *peaksNum = peakEx.peaks().size();
-        Result = (Peak*)std::malloc(sizeof(Peak) * *peaksNum); 
+        Result = (Peak*)malloc(sizeof(Peak) * *peaksNum); 
         std::copy(peakEx.peaks().begin(), peakEx.peaks().end(), Result);
 
         return Result;
@@ -55,7 +55,7 @@ Peak *extractPeaks(const char *filename, void (*tracker)(int64_t, int64_t)
     {
         if(Result)
         {
-            std::free(Result);
+            free(Result);
         }
 
         return nullptr;

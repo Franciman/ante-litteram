@@ -1,5 +1,7 @@
 VPATH = media_processor/
 
+FFMPEG_CFLAGS = $(shell pkg-config --cflags libavformat libavcodec libswresample libavutil)
+
 CFLAGS = -std=c++14 $(FFMPEG_CFLAGS) -I. -O2
 
 OBJECT_FILES = .ffmpeg_error.o .keyframe_extractor.o .media_file.o .media_processor.o .peak_extractor.o .stream_processor.o .MediaProc.o

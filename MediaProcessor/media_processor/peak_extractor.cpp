@@ -172,8 +172,8 @@ void PeakExtractor::normalizePeaks()
         // Apply norm factor
         for(auto &peak : Peaks)
         {
-            peak.Max = std::round(peak.Max * NormFactor);
-            peak.Min = std::round(peak.Min * NormFactor);
+            peak.Max = round(peak.Max * NormFactor);
+            peak.Min = round(peak.Min * NormFactor);
         }
     }
 }
